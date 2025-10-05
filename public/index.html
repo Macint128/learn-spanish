@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0, user-scalable=no" />
+<title>스페인어 RPG 학습 게임</title>
+
+<!-- 홈 화면 아이콘 -->
+<link rel="apple-touch-icon" href="icon.png">
+
+<!-- 전체화면 웹앱 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<style>
+  :root{
+    --accent:#ff4500;
+    --bg:#f0f8ff;
+    --card:#ffffff;
+  }
+  html,body{height:100%;margin:0;}
+  body{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    background:var(--bg);
+    padding:14px;
+    color:#222;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  header{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:10px;
+  }
+  h1{font-size:18px;margin:0}
+  p.subtitle{margin:0;color:#444;font-size:13px}
+
+  .game{
+    max-width:780px;
+    margin:10px auto;
+  }
+
+  .chapter{
+    background:var(--card);
+    padding:12px;
+    border-radius:12px;
+    box-shadow:0 6px 18px rgba(0,0,0,0.06);
+    margin-bottom:12px;
+  }
+  .chapter h2{margin:0 0 6px 0;color:var(--accent);font-size:16px}
+  .problem{border:1px dashed #eee;padding:8px;border-radius:8px;margin-bottom:8px;background:linear-gradient(180deg, rgba(255,255,255,0.9), rgba(250,250,250,0.9))}
+  .problem strong{display:block;margin-bottom:6px}
+  .mission{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0;padding:6px;border-radius:8px}
+  .mission button, .smallbtn{
+    background:var(--accent); color:white; border:none;padding:6px 10px;border-radius:8px;font-size:13px;cursor:pointer;
+    box-shadow:0 2px 6px rgba(0,0,0,0.08)
+  }
+  .mission button:hover{filter:brightness(.95)}
+  input[type="text"]{padding:6px;border-radius:8px;border:1px solid #ddd;font-size:14px}
+  .msg{margin-left:8px;font-size:14px}
+  .success{color:green}
+  .fail{color:#c0392b}
+
+  footer{font-size:12px;color:#666;margin-top:12px;text-align:center}
+  .note{font-size:12px;color:#555;margin-top:6px}
+  @media (max-width:420px){
+    body{padding:10px}
+    .mission{flex-direction:column;align-items:flex-start}
+    input[type="text"]{width:100%}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🎮 스페인어 RPG — webapp</h1>
+    <p class="subtitle">홈 화면에 추가해서 바로 플레이하세요 — 발음(🔊) 지원</p>
+  </div>
+</header>
+
+<main class="game" id="game"></main>
+
+<footer>
+  <div>발음은 iPhone Safari의 SpeechSynthesis를 사용합니다. (사파리 기준 최적)</div>
+  <div class="note">잘못하면 "🫥사라질게요!"가 나온다 — 무서운 친구... 농담이야.</div>
+</footer>
+
+<script>
+/*
+  전체 구조:
+  - 5 챕터, 챕터당 5 문제, 문제당 5 미션(예시 데이터)
+  - 사용자 요청에 따라 오답/정답 멘트 로직 추가
+*/
+
+const praiseText = "🤧앳츄! 잘했어요!";
+const firstWrongVariants = ["🤫이번엔 비밀로 해줄게요!", "😅다음부터 잘해 봐요!"];
+const repeatWrongText = "🫥사라질게요!";
+
+// 시도 횟수 저장: key -> attempts (숫자)
+const attempts = {}; // ex: attempts["0_1_2"] = 1
+
+// 샘플 데이터: 5챕터 X 5문제 X 5미션 구성 (내용은 예시이며 확장 가능)
+const chapters = [
+  {
+    title: "Chapter 1: 아침 인사",
+    problems: [
+      {
+        question: "기본 인사",
+        missions: [
+          {type:"speak", text:"¡Hola, Marco!"},
+          {type:"input", text:"'안녕'을 스페인어로 입력하세요", answer:"hola"},
+          {type:"fill", text:"친구 이름 넣어 문장 완성: ¡Hola, {name}!", answer:"¡Hola, Marco!"},
+          {type:"speak", text:"¿Cómo estás?"},
+          {type:"choice", text:"'잘 지냈어?'에 맞는 문장은?", options:["¿Cómo estás?","Hola","Gracias"], answer:"¿Cómo estás?"}
+        ]
+      },
+      {
+        question: "상태 묻기",
+        missions: [
+          {type:"speak", text:"Estoy bien"},
+          {type:"choice", text:"'아주 좋아'에 가장 가까운 표현은?", options:["Muy bien","Adiós","Por favor"], answer:"Muy bien"},
+          {type:"input", text:"'아주 좋아' 입력 (소문자 허용)", answer:"muy bien"},
+          {type:"speak", text:"Estoy feliz"},
+          {type:"fill", text:"문장 완성: Muy ___", answer:"bien"}
+        ]
+      },
+      {
+        question: "작별 인사",
+        missions: [
+          {type:"speak", text:"Hasta luego"},
+          {type:"input", text:"'다음에 봐' 입력", answer:"hasta luego"},
+          {type:"fill", text:"문장 완성: Hasta ___", answer:"luego"},
+          {type:"speak", text:"Nos vemos"},
+          {type:"choice", text:"'나중에 봐'에 맞는 문장은?", options:["Nos vemos","Hola","Adiós"], answer:"Nos vemos"}
+        ]
+      },
+      {
+        question: "아침 감정 묻기",
+        missions: [
+          {type:"speak", text:"¿Qué tal tu día?"},
+          {type:"input", text:"'오늘 어때?' 입력", answer:"qué tal tu día"},
+          {type:"fill", text:"문장 완성: ¿Qué ___ tu día?", answer:"tal"},
+          {type:"speak", text:"Bien, gracias"},
+          {type:"choice", text:"'좋아, 고마워'는?", options:["Bien, gracias","Adiós","Hola"], answer:"Bien, gracias"}
+        ]
+      },
+      {
+        question: "인사 복습",
+        missions:[
+          {type:"speak", text:"¡Hola! ¿Qué tal?"},
+          {type:"input", text:"'안녕, 잘지냈어?' 입력", answer:"hola, qué tal"},
+          {type:"fill", text:"문장 완성: ¡___! ¿Qué tal?", answer:"Hola"},
+          {type:"speak", text:"¡Buenos días!"},
+          {type:"choice", text:"아침인사로 맞는 표현은?", options:["Buenos días","Buenas noches","Hasta luego"], answer:"Buenos días"}
+        ]
+      }
+    ]
+  },
+
+  {
+    title: "Chapter 2: 카페 주문",
+    problems: [
+      {
+        question:"기본 주문",
+        missions:[
+          {type:"speak", text:"Quisiera un café con leche, por favor."},
+          {type:"input", text:"'~주세요' 표현 (Quisiera 입력)", answer:"quisiera"},
+          {type:"fill", text:"문장 완성: Quisiera un ___ con leche", answer:"café"},
+          {type:"speak", text:"Un cortado, por favor."},
+          {type:"choice", text:"'감사합니다'는?", options:["Gracias","Por favor","Hola"], answer:"Gracias"}
+        ]
+      },
+      {
+        question:"사이즈 묻기",
+        missions:[
+          {type:"speak", text:"¿Qué tamaño quieres?"},
+          {type:"choice", text:"작은 사이즈는?", options:["Pequeño","Grande","Medio"], answer:"Pequeño"},
+          {type:"input", text:"'중간' 스페인어 입력", answer:"medio"},
+          {type:"speak", text:"Para llevar, por favor."},
+          {type:"fill", text:"문장 완성: Para ___, por favor.", answer:"llevar"}
+        ]
+      },
+      {
+        question:"추가 주문",
+        missions:[
+          {type:"speak", text:"Con azúcar, por favor."},
+          {type:"input", text:"'설탕' 스페인어 입력", answer:"azúcar"},
+          {type:"fill", text:"문장 완성: Con ___, por favor.", answer:"azúcar"},
+          {type:"speak", text:"Sin leche, por favor."},
+          {type:"choice", text:"'우유 없이'는?", options:["Sin leche","Con leche","Con azúcar"], answer:"Sin leche"}
+        ]
+      },
+      {
+        question:"결제",
+        missions:[
+          {type:"speak", text:"¿Cuánto es?"},
+          {type:"input", text:"'얼마예요?' 입력", answer:"¿cuánto es?"},
+          {type:"fill", text:"문장 완성: ¿___ es?", answer:"Cuánto"},
+          {type:"speak", text:"Pago con tarjeta."},
+          {type:"choice", text:"'카드로 결제'는?", options:["Pago con tarjeta","Pago en efectivo","Gracias"], answer:"Pago con tarjeta"}
+        ]
+      },
+      {
+        question:"마무리",
+        missions:[
+          {type:"speak", text:"Gracias, que tenga un buen día."},
+          {type:"input", text:"'좋은 하루 보내세요' 입력", answer:"que tenga un buen día"},
+          {type:"fill", text:"문장 완성: Que tenga un ___ día.", answer:"buen"},
+          {type:"speak", text:"Hasta luego"},
+          {type:"choice", text:"'안녕'에 해당하는 표현은?", options:["Adiós","Gracias","Hola"], answer:"Adiós"}
+        ]
+      }
+    ]
+  },
+
+  {
+    title:"Chapter 3: 길 묻기",
+    problems:[
+      {
+        question:"역 찾기",
+        missions:[
+          {type:"speak", text:"Perdón, ¿dónde está la estación de metro?"},
+          {type:"input", text:"'지하철역은 어디에요?' 입력", answer:"¿dónde está la estación de metro?"},
+          {type:"fill", text:"문장 완성: ¿Dónde está la ___ de metro?", answer:"estación"},
+          {type:"speak", text:"Siga recto y luego gire a la izquierda."},
+          {type:"choice", text:"'왼쪽으로 도세요'는?", options:["Gire a la izquierda","Siga recto","Suba las escaleras"], answer:"Gire a la izquierda"}
+        ]
+      },
+      {
+        question:"거리 물어보기",
+        missions:[
+          {type:"speak", text:"¿Está lejos?"},
+          {type:"choice", text:"'멀어요?'에 해당하는 문장", options:["¿Está lejos?","¿Dónde está?","¿Qué tal?"], answer:"¿Está lejos?"},
+          {type:"input", text:"'가까워요' 입력", answer:"cerca"},
+          {type:"speak", text:"Está a diez minutos caminando."},
+          {type:"fill", text:"문장 완성: Está a ___ minutos caminando.", answer:"diez"}
+        ]
+      },
+      {
+        question:"장소 확인",
+        missions:[
+          {type:"speak", text:"¿Dónde está el baño?"},
+          {type:"input", text:"'화장실' 스페인어 입력", answer:"el baño"},
+          {type:"fill", text:"문장 완성: ¿Dónde está el ___?", answer:"baño"},
+          {type:"speak", text:"Al fondo a la derecha."},
+          {type:"choice", text:"'오른쪽'은?", options:["Derecha","Izquierda","Recto"], answer:"Derecha"}
+        ]
+      },
+      {
+        question:"대중교통",
+        missions:[
+          {type:"speak", text:"¿Dónde puedo comprar un billete?"},
+          {type:"input", text:"'표' 스페인어 입력", answer:"billete"},
+          {type:"fill", text:"문장 완성: ¿Dónde puedo comprar un ___?", answer:"billete"},
+          {type:"speak", text:"En la taquilla o la máquina automática."},
+          {type:"choice", text:"'자동판매기'는?", options:["La máquina automática","La taquilla","El andén"], answer:"La máquina automática"}
+        ]
+      },
+      {
+        question:"도움 요청",
+        missions:[
+          {type:"speak", text:"Disculpe, ¿me puede ayudar?"},
+          {type:"input", text:"'도와주실 수 있나요?' 입력", answer:"¿me puede ayudar?"},
+          {type:"fill", text:"문장 완성: Disculpe, ¿me puede ___?", answer:"ayudar"},
+          {type:"speak", text:"Claro, dígame."},
+          {type:"choice", text:"'물어보다'는?", options:["Preguntar","Ayudar","Salir"], answer:"Preguntar"}
+        ]
+      }
+    ]
+  },
+
+  {
+    title:"Chapter 4: 쇼핑",
+    problems:[
+      {
+        question:"가격 묻기",
+        missions:[
+          {type:"speak", text:"¿Cuánto cuesta esta camiseta?"},
+          {type:"input", text:"'이 셔츠 얼마에요?' 입력", answer:"¿cuánto cuesta esta camiseta?"},
+          {type:"fill", text:"문장 완성: ¿Cuánto ___ esta camiseta?", answer:"cuesta"},
+          {type:"speak", text:"Son 20 euros."},
+          {type:"choice", text:"'20유로입니다'는?", options:["Son 20 euros","Es gratis","No está disponible"], answer:"Son 20 euros"}
+        ]
+      },
+      {
+        question:"사이즈",
+        missions:[
+          {type:"speak", text:"¿Tiene otra talla?"},
+          {type:"choice", text:"'다른 사이즈 있나요?'는?", options:["¿Tiene otra talla?","¿Precio?","¿Dónde está?"], answer:"¿Tiene otra talla?"},
+          {type:"input", text:"'사이즈' 스페인어 입력", answer:"talla"},
+          {type:"speak", text:"Solo queda la M."},
+          {type:"fill", text:"문장 완성: Solo queda la ___", answer:"M"}
+        ]
+      },
+      {
+        question:"환불/교환",
+        missions:[
+          {type:"speak", text:"Quisiera cambiar esto, por favor."},
+          {type:"input", text:"'교환하고 싶어요' 입력", answer:"quisiera cambiar esto"},
+          {type:"fill", text:"문장 완성: Quisiera ___ esto, por favor.", answer:"cambiar"},
+          {type:"speak", text:"¿Tiene el recibo?"},
+          {type:"choice", text:"'영수증'은?", options:["Recibo","Factura","Pago"], answer:"Recibo"}
+        ]
+      },
+      {
+        question:"결제 방법",
+        missions:[
+          {type:"speak", text:"¿Aceptan tarjeta?"},
+          {type:"choice", text:"'카드 받나요?'는?", options:["¿Aceptan tarjeta?","¿Aceptan efectivo?","¿Aceptan cheques?"], answer:"¿Aceptan tarjeta?"},
+          {type:"input", text:"'현금' 입력", answer:"efectivo"},
+          {type:"speak", text:"Solo efectivo, lo siento."},
+          {type:"fill", text:"문장 완성: Solo ___, lo siento.", answer:"efectivo"}
+        ]
+      },
+      {
+        question:"영수증 요청",
+        missions:[
+          {type:"speak", text:"¿Me puede dar el recibo, por favor?"},
+          {type:"input", text:"'영수증 주세요' 입력", answer:"me puede dar el recibo, por favor"},
+          {type:"fill", text:"문장 완성: ¿Me puede dar el ___?", answer:"recibo"},
+          {type:"speak", text:"Claro, aquí tiene."},
+          {type:"choice", text:"'여기 있습니다'는?", options:["Aquí tiene","Lo siento","Gracias"], answer:"Aquí tiene"}
+        ]
+      }
+    ]
+  },
+
+  {
+    title:"Chapter 5: 친구와 약속",
+    problems:[
+      {
+        question:"영화 약속",
+        missions:[
+          {type:"speak", text:"¿Quieres ir al cine este sábado?"},
+          {type:"choice", text:"'주말에'는?", options:["Este sábado","Ayer","Mañana"], answer:"Este sábado"},
+          {type:"input", text:"'몇 시에?' 입력 (A las 5 예시)", answer:"a las 5"},
+          {type:"speak", text:"A las 5 de la tarde."},
+          {type:"fill", text:"문장 완성: A las ___ de la tarde.", answer:"5"}
+        ]
+      },
+      {
+        question:"식사 약속",
+        missions:[
+          {type:"speak", text:"¿Quedamos para cenar mañana?"},
+          {type:"input", text:"'내일' 스페인어 입력", answer:"mañana"},
+          {type:"choice", text:"'저녁식사'는?", options:["Cenar","Almorzar","Desayunar"], answer:"Cenar"},
+          {type:"fill", text:"문장 완성: ¿Quedamos para ___ mañana?", answer:"cenar"},
+          {type:"speak", text:"Perfecto, a las 8."}
+        ]
+      },
+      {
+        question:"시간 조정",
+        missions:[
+          {type:"speak", text:"¿A qué hora nos vemos?"},
+          {type:"input", text:"'몇 시에 만날까?' 입력", answer:"¿a qué hora nos vemos?"},
+          {type:"fill", text:"문장 완성: ¿A qué ___ nos vemos?", answer:"hora"},
+          {type:"choice", text:"'오후 3시'는?", options:["A las 3 de la tarde","A la medianoche","A las 3 de la mañana"], answer:"A las 3 de la tarde"},
+          {type:"speak", text:"Nos vemos a las 3."}
+        ]
+      },
+      {
+        question:"약속 확인",
+        missions:[
+          {type:"speak", text:"¿Sigues libre el sábado?"},
+          {type:"input", text:"'아직 시간 있어?' 입력", answer:"sigues libre"},
+          {type:"fill", text:"문장 완성: ¿Sigues ___ el sábado?", answer:"libre"},
+          {type:"choice", text:"'응, 괜찮아'는?", options:["Sí, puedo","No, gracias","Quizás"], answer:"Sí, puedo"},
+          {type:"speak", text:"Perfecto, nos vemos entonces."}
+        ]
+      },
+      {
+        question:"약속 취소",
+        missions:[
+          {type:"speak", text:"Lo siento, no puedo venir."},
+          {type:"input", text:"'미안해, 못갈 것 같아' 입력", answer:"lo siento, no puedo venir"},
+          {type:"fill", text:"문장 완성: Lo siento, no puedo ___", answer:"venir"},
+          {type:"choice", text:"'미안해'는?", options:["Lo siento","Por favor","Gracias"], answer:"Lo siento"},
+          {type:"speak", text:"Otra vez será."}
+        ]
+      }
+    ]
+  }
+];
+
+// 기본 speak(발음) 함수 — Safari/iOS에서 동작
+function speak(text){
+  try{
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'es-ES';
+    u.rate = 0.95;
+    u.pitch = 1.0;
+    speechSynthesis.speak(u);
+  }catch(e){
+    console.warn('Speech synthesis not available', e);
+  }
+}
+
+// 메시지 로직: id 기반으로 attempts 증가/판별
+function handleWrongMessage(id){
+  attempts[id] = (attempts[id] || 0) + 1;
+  if(attempts[id] === 1){
+    // 첫번째 틀림: 무작위로 두 문구 중 하나
+    const pick = firstWrongVariants[Math.floor(Math.random()*firstWrongVariants.length)];
+    return pick;
+  } else {
+    // 두번째 이상 틀림: 최종 멘트
+    return repeatWrongText;
+  }
+}
+
+function handleCorrectMessage(id){
+  // 정답이면 시도수 초기화(선택사항) 또는 유지. 여기선 초기화.
+  attempts[id] = 0;
+  return praiseText;
+}
+
+// 체크 헬퍼: input과 fill은 동일 로직 사용
+function checkAnswerRaw(user, answer){
+  if(!user && !answer) return false;
+  // normalize: 소문자, 공백 처리, 작은/큰 따옴표 제거
+  const norm = (s)=> s.toString().trim().toLowerCase()
+    .replace(/[¡¿]/g,'')
+    .replace(/\s+/g,' ')
+    .normalize('NFC');
+  return norm(user) === norm(answer);
+}
+
+// DOM 생성
+function createGame(){
+  const container = document.getElementById('game');
+  chapters.forEach((chapter, ci)=>{
+    const chap = document.createElement('section');
+    chap.className = 'chapter';
+    chap.innerHTML = `<h2>${chapter.title}</h2>`;
+    chapter.problems.forEach((problem, pi)=>{
+      const prob = document.createElement('div');
+      prob.className = 'problem';
+      prob.innerHTML = `<strong>문제 ${pi+1}: ${problem.question}</strong>`;
+      problem.missions.forEach((mission, mi)=>{
+        const id = `${ci}_${pi}_${mi}`; // 고유 id
+        const mis = document.createElement('div');
+        mis.className = 'mission';
+
+        if(mission.type === 'speak'){
+          mis.innerHTML = `<div style="flex:1">${mission.text}</div><div><button onclick="speak('${escapeForJs(mission.text)}')">🔊 발음 듣기</button></div>`;
+        }
+        else if(mission.type === 'input'){
+          mis.innerHTML = `<div style="flex:1">${mission.text}</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="text" id="input_${id}" placeholder="입력...">
+              <button onclick="onCheckInput('${id}','${escapeForJs(mission.answer)}')">확인</button>
+              <span class="msg" id="msg_${id}"></span>
+            </div>`;
+        }
+        else if(mission.type === 'fill'){
+          // show template if any
+          mis.innerHTML = `<div style="flex:1">${mission.text}</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="text" id="fill_${id}" placeholder="완성...">
+              <button onclick="onCheckInput('fill_${id}','${escapeForJs(mission.answer)}')">확인</button>
+              <span class="msg" id="msg_fill_${id}"></span>
+            </div>`;
+        }
+        else if(mission.type === 'choice'){
+          const wrapper = document.createElement('div');
+          wrapper.style.display = 'flex';
+          wrapper.style.flexDirection = 'column';
+          wrapper.style.gap = '6px';
+          const txt = document.createElement('div');
+          txt.textContent = mission.text;
+          wrapper.appendChild(txt);
+          const opts = document.createElement('div');
+          opts.style.display='flex';
+          opts.style.flexWrap='wrap';
+          opts.style.gap='6px';
+          mission.options.forEach(opt=>{
+            const b = document.createElement('button');
+            b.className = 'smallbtn';
+            b.textContent = opt;
+            b.onclick = ()=> onCheckChoice(id, opt, mission.answer);
+            opts.appendChild(b);
+          });
+          const msgspan = document.createElement('span'); msgspan.id = `msg_${id}`; msgspan.className='msg';
+          wrapper.appendChild(opts);
+          wrapper.appendChild(msgspan);
+          mis.appendChild(wrapper);
+        }
+        else {
+          mis.textContent = mission.text || '';
+        }
+
+        prob.appendChild(mis);
+      });
+
+      chap.appendChild(prob);
+    });
+
+    container.appendChild(chap);
+  });
+}
+
+// 입력 확인 이벤트
+function onCheckInput(id, answer){
+  // id may be 'fill_0_1_2' or '0_1_2'
+  const el = document.getElementById(id) || document.getElementById('input_'+id) || document.getElementById(id.replace(/^fill_/,''));
+  // Try common ids
+  const inputEl = document.getElementById(id) || document.getElementById('input_'+id) || document.getElementById(id) || document.getElementById('fill_'+id) || document.getElementById(id.replace(/^fill_/,''));
+  // More robust:
+  const possible = [
+    document.getElementById(id),
+    document.getElementById('input_'+id),
+    document.getElementById('fill_'+id),
+    document.getElementById(id.replace(/^fill_/,'')),
+  ];
+  let input = null;
+  for(const p of possible) if(p){ input = p; break; }
+  if(!input) return;
+
+  const user = input.value || '';
+  const msgId = id.startsWith('fill_') ? `msg_${id}` : `msg_${id}`;
+  const msgEl = document.getElementById(msgId) || document.getElementById(`msg_${id}`) || document.getElementById(`msg_fill_${id}`);
+
+  const ok = checkAnswerRaw(user, answer);
+  if(ok){
+    if(msgEl){
+      msgEl.textContent = handleCorrectMessage(id);
+      msgEl.className = 'msg success';
+    }
+  } else {
+    const text = handleWrongMessage(id);
+    if(msgEl){
+      msgEl.textContent = text;
+      msgEl.className = 'msg fail';
+    }
+  }
+}
+
+// 선택지 확인
+function onCheckChoice(id, selected, answer){
+  const msgEl = document.getElementById(`msg_${id}`);
+  const ok = checkAnswerRaw(selected, answer);
+  if(ok){
+    msgEl.textContent = handleCorrectMessage(id);
+    msgEl.className = 'msg success';
+  } else {
+    const text = handleWrongMessage(id);
+    msgEl.textContent = text;
+    msgEl.className = 'msg fail';
+  }
+}
+
+// 작은 안전 함수: 따옴표 등 텍스트 이스케이프
+function escapeForJs(s){
+  if(!s) return '';
+  return s.replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/\n/g,' ');
+}
+
+// init
+createGame();
+
+// 노트: 필요하면 attempts를 로컬스토리지에 저장해 다음 세션에도 유지하게 할 수 있음.
+// 예: localStorage.setItem('rpg_attempts', JSON.stringify(attempts))
+</script>
+
+</body>
+</html>
